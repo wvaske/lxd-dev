@@ -46,6 +46,9 @@ ${BOLD}COMMANDS${RESET}
     ${GREEN}snapshot${RESET}    Create, restore, or list container snapshots
     ${GREEN}vscode${RESET}      Connect VS Code Remote-SSH to a container
     ${GREEN}port${RESET}        Forward ports between host and container
+    ${GREEN}mount${RESET}       Mount host directory into running container
+    ${GREEN}unmount${RESET}     Remove bind mount from container
+    ${GREEN}mounts${RESET}      List all active bind mounts on container
     ${GREEN}refresh${RESET}     Push latest shell config to existing containers
     ${GREEN}destroy${RESET}     Remove a container (and optionally its worktree)
     ${GREEN}exec${RESET}        Run a command in a container
@@ -67,6 +70,10 @@ ${BOLD}EXAMPLES${RESET}
 
     ${DIM}# Enter a container${RESET}
     cdev enter my-project
+
+    ${DIM}# Mount host directory into container${RESET}
+    cdev mount my-project ~/code /workspace/code
+    cdev mounts my-project
 
     ${DIM}# Run commands across all worktree containers${RESET}
     cdev status ~/code/myrepo --exec "git pull"
@@ -571,6 +578,97 @@ ${BOLD}EXAMPLES${RESET}
     cdev exec my-project git status
     cdev exec my-project npm test
     cdev exec my-project --root apt update
+EOF
+}
+
+show_mount_help() {
+    cat << EOF
+${BOLD}cdev mount${RESET} - Mount host directory into running container
+
+${BOLD}USAGE${RESET}
+    cdev mount <container> <host-path> <container-path> [--readonly]
+
+${BOLD}ARGUMENTS${RESET}
+    container         Container name
+    host-path         Path to directory on host (relative or absolute)
+    container-path    Absolute path where directory appears in container
+
+${BOLD}OPTIONS${RESET}
+    --readonly        Mount as read-only (container cannot modify files)
+    -h, --help        Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Mounts a host directory into a running container as a persistent disk device.
+    The mount persists across container restarts until explicitly removed.
+
+    Files are shared instantly - changes on host appear in container and vice
+    versa (unless mounted readonly).
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Mount current directory into container${RESET}
+    cdev mount my-project . /home/developer/workspace
+
+    ${DIM}# Mount with absolute paths${RESET}
+    cdev mount my-project /home/user/code /workspace/code
+
+    ${DIM}# Mount as read-only${RESET}
+    cdev mount my-project ./config /etc/myapp/config --readonly
+
+    ${DIM}# Mount shared data directory${RESET}
+    cdev mount python-dev ~/datasets /data
+EOF
+}
+
+show_unmount_help() {
+    cat << EOF
+${BOLD}cdev unmount${RESET} - Remove bind mount from container
+
+${BOLD}USAGE${RESET}
+    cdev unmount <container> <mount-name-or-path>
+
+${BOLD}ARGUMENTS${RESET}
+    container           Container name
+    mount-name-or-path  Device name (cdev-mount-*) or container path
+
+${BOLD}OPTIONS${RESET}
+    -h, --help          Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Removes a bind mount from the container. The host directory is not
+    affected - only the container's access to it is removed.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Unmount by container path${RESET}
+    cdev unmount my-project /home/developer/workspace
+
+    ${DIM}# Unmount by device name${RESET}
+    cdev unmount my-project cdev-mount-home-developer-workspace
+
+    ${DIM}# List mounts first to see what to unmount${RESET}
+    cdev mounts my-project
+    cdev unmount my-project /workspace/code
+EOF
+}
+
+show_mounts_help() {
+    cat << EOF
+${BOLD}cdev mounts${RESET} - List all active bind mounts on container
+
+${BOLD}USAGE${RESET}
+    cdev mounts <container>
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+
+${BOLD}OPTIONS${RESET}
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Shows all active bind mounts on the specified container with their
+    device names, host paths, container paths, and access modes (ro/rw).
+
+${BOLD}EXAMPLES${RESET}
+    cdev mounts my-project
 EOF
 }
 
@@ -1705,6 +1803,9 @@ main() {
         snapshot|snap) cmd_snapshot "$@" ;;
         vscode)   cmd_vscode "$@" ;;
         port)     cmd_port "$@" ;;
+        mount)    cmd_mount "$@" ;;
+        unmount)  cmd_unmount "$@" ;;
+        mounts)   cmd_mounts "$@" ;;
         refresh)  cmd_refresh "$@" ;;
         destroy|rm) cmd_destroy "$@" ;;
         exec)     cmd_exec "$@" ;;
