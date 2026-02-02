@@ -1,0 +1,113 @@
+#cloud-config
+# Base cloud-init configuration for all Claude Code dev containers
+
+# System configuration
+timezone: UTC
+locale: en_US.UTF-8
+
+# Create developer user
+users:
+  - name: developer
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [sudo, docker]
+    ssh_authorized_keys: []  # Will be populated by setup script
+
+# Essential packages
+package_update: true
+package_upgrade: false
+packages:
+  - git
+  - curl
+  - wget
+  - vim
+  - nano
+  - htop
+  - tmux
+  - jq
+  - unzip
+  - openssh-server
+  - ca-certificates
+  - gnupg
+  - lsb-release
+  - ripgrep
+  - fd-find
+  - fzf
+  - tree
+  - ncdu
+  - duf
+
+# Write configuration files
+write_files:
+  # SSH config for developer
+  - path: /home/developer/.ssh/config
+    owner: developer:developer
+    permissions: "0600"
+    content: |
+      Host *
+        AddKeysToAgent yes
+        IdentitiesOnly yes
+
+      # Use host SSH keys (mounted read-only)
+      Host github.com gitlab.com bitbucket.org
+        IdentityFile ~/.ssh-host/id_ed25519
+        IdentityFile ~/.ssh-host/id_rsa
+
+  # Bashrc additions
+  - path: /home/developer/.bashrc.d/claude-dev.sh
+    owner: developer:developer
+    permissions: "0644"
+    content: |
+      # Claude Code dev environment customizations
+
+      # Colorful prompt with container indicator
+      PS1='\[\033[01;35m\][lxd]\[\033[00m\] \[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+      # Aliases
+      alias ll='ls -alF'
+      alias la='ls -A'
+      alias l='ls -CF'
+      alias gs='git status'
+      alias gd='git diff'
+      alias gl='git log --oneline -20'
+      alias gp='git push'
+      alias gc='git commit'
+
+      # Claude Code alias
+      alias c='claude'
+      alias cc='claude --continue'
+
+      # FZF integration
+      [ -f /usr/share/doc/fzf/examples/key-bindings.bash ] && source /usr/share/doc/fzf/examples/key-bindings.bash
+
+  # Git template for commit messages
+  - path: /home/developer/.gitmessage
+    owner: developer:developer
+    permissions: "0644"
+    content: |
+      # [type]: [subject]
+      #
+      # [body]
+      #
+      # Types: feat, fix, docs, style, refactor, test, chore
+
+# Commands to run on first boot
+runcmd:
+  # Source additional bashrc files
+  - echo '[ -d ~/.bashrc.d ] && for f in ~/.bashrc.d/*.sh; do source "$f"; done' >> /home/developer/.bashrc
+
+  # Fix SSH directory permissions
+  - mkdir -p /home/developer/.ssh
+  - chown -R developer:developer /home/developer/.ssh
+  - chmod 700 /home/developer/.ssh
+
+  # Create workspace directory
+  - mkdir -p /home/developer/workspace
+  - chown developer:developer /home/developer/workspace
+
+  # Start SSH daemon
+  - systemctl enable ssh
+  - systemctl start ssh
+
+# Final message
+final_message: "Claude Code dev environment ready after $UPTIME seconds"

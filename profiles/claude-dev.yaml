@@ -1,0 +1,53 @@
+# Base LXD profile for Claude Code development environments
+# Apply with: lxc profile create claude-dev && lxc profile edit claude-dev < profiles/claude-dev.yaml
+
+config:
+  # Resource limits
+  limits.cpu: "4"
+  limits.memory: 8GB
+  limits.memory.swap: "false"
+
+  # Security settings - unprivileged container
+  security.privileged: "false"
+  security.nesting: "true"  # Allow docker-in-lxd if needed
+
+  # User namespace mapping (isolate container root from host)
+  raw.idmap: |
+    uid 1000 1000
+    gid 1000 1000
+
+  # Environment variables available in container
+  environment.TERM: xterm-256color
+  environment.COLORTERM: truecolor
+  environment.EDITOR: vim
+  environment.VISUAL: vim
+  environment.LANG: en_US.UTF-8
+  environment.LC_ALL: en_US.UTF-8
+  environment.CLICOLOR: "1"
+  environment.FORCE_COLOR: "1"
+
+description: Base profile for Claude Code sandboxed development
+devices:
+  # Root filesystem with size limit
+  root:
+    path: /
+    pool: default
+    size: 50GB
+    type: disk
+
+  # Mount SSH keys (read-only) for git operations
+  ssh-keys:
+    source: ${HOME}/.ssh
+    path: /home/developer/.ssh-host
+    type: disk
+    readonly: "true"
+
+  # Note: .gitconfig is copied during container setup, not mounted,
+  # so the container can modify it (e.g., add safe.directory)
+
+  # GPU passthrough (optional - uncomment if needed for ML work)
+  # gpu:
+  #   type: gpu
+  #   gid: "1000"
+
+name: claude-dev

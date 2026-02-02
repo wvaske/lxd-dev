@@ -1,0 +1,28 @@
+# =============================================================================
+# Python Stack Configuration
+# =============================================================================
+# Edit this file to customize Python development environments.
+# Changes take effect when you rebuild: cdev build python
+
+# System packages via apt
+apt:
+  - python3
+  - python3-pip
+  - python3-venv
+  - python3-dev
+
+# Python packages installed globally via pip
+# Uses --break-system-packages flag for Ubuntu 24.04 compatibility
+pip_global:
+  - pipx
+  - black
+  - ruff
+  - mypy
+  - pytest
+  - ipython
+
+# Additional commands to run (as root)
+post_apt_commands: []
+
+# Commands to run as developer user
+developer_commands: []

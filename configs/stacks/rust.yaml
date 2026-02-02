@@ -1,0 +1,21 @@
+# =============================================================================
+# Rust Stack Configuration
+# =============================================================================
+# Edit this file to customize Rust development environments.
+# Changes take effect when you rebuild: cdev build rust
+
+# System packages via apt
+apt:
+  - pkg-config
+  - libssl-dev
+
+# Commands to run after apt (as root)
+post_apt_commands: []
+
+# Commands to run as developer user
+# Rust is installed per-user via rustup
+developer_commands:
+  - |
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    source ~/.cargo/env
+    rustup component add rustfmt clippy

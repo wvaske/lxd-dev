@@ -1,0 +1,29 @@
+# Node.js stack profile - apply on top of claude-dev base
+# Usage: lxc profile create nodejs && lxc profile edit nodejs < profiles/stacks/nodejs.yaml
+
+config:
+  # Node.js specific environment
+  environment.NODE_ENV: development
+  environment.NPM_CONFIG_PREFIX: /home/developer/.npm-global
+
+  # Cloud-init to install Node.js toolchain
+  user.user-data: |
+    #cloud-config
+    package_update: true
+    packages:
+      - curl
+      - build-essential
+    runcmd:
+      # Install Node.js via nvm
+      - |
+        su - developer -c '
+          curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          nvm install --lts
+          nvm use --lts
+          npm install -g pnpm yarn typescript ts-node
+        '
+
+description: Node.js development stack
+name: nodejs

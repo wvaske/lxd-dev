@@ -1,0 +1,25 @@
+# =============================================================================
+# Node.js Stack Configuration
+# =============================================================================
+# Edit this file to customize Node.js development environments.
+# Changes take effect when you rebuild: cdev build nodejs
+
+# System packages via apt
+apt: []
+
+# Commands to install Node.js (runs before npm packages)
+post_apt_commands:
+  # Install Node.js LTS via NodeSource
+  - |
+    curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+    apt-get install -y nodejs
+
+# NPM packages installed globally
+npm_global:
+  - typescript
+  - ts-node
+  - eslint
+  - prettier
+
+# Commands to run as developer user
+developer_commands: []

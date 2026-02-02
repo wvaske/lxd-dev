@@ -1,0 +1,54 @@
+#cloud-config
+# Claude Code installation cloud-init
+# This is merged with base.yaml during container creation
+
+# Additional packages needed for Claude Code
+packages:
+  - nodejs
+  - npm
+
+write_files:
+  # Claude Code installation script
+  - path: /opt/install-claude-code.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -e
+
+      echo "Installing Claude Code..."
+
+      # Install via npm globally
+      npm install -g @anthropic-ai/claude-code
+
+      # Create config directory
+      mkdir -p /home/developer/.config/claude-code
+      chown -R developer:developer /home/developer/.config/claude-code
+
+      # Verify installation
+      if command -v claude &> /dev/null; then
+        echo "Claude Code installed successfully: $(claude --version)"
+      else
+        echo "Warning: Claude Code installation may have failed"
+      fi
+
+  # Claude Code configuration template
+  - path: /home/developer/.config/claude-code/config.json
+    owner: developer:developer
+    permissions: "0600"
+    content: |
+      {
+        "theme": "dark",
+        "editor": "vim",
+        "autoSave": true,
+        "telemetry": false
+      }
+
+runcmd:
+  # Install Claude Code
+  - /opt/install-claude-code.sh
+
+  # Set up API key from environment (user should set ANTHROPIC_API_KEY)
+  - |
+    if [ -n "$ANTHROPIC_API_KEY" ]; then
+      echo "export ANTHROPIC_API_KEY='$ANTHROPIC_API_KEY'" >> /home/developer/.bashrc
+    fi

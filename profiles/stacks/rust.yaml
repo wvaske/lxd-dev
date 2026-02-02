@@ -1,0 +1,29 @@
+# Rust stack profile - apply on top of claude-dev base
+# Usage: lxc profile create rust && lxc profile edit rust < profiles/stacks/rust.yaml
+
+config:
+  # Rust specific environment
+  environment.CARGO_HOME: /home/developer/.cargo
+  environment.RUSTUP_HOME: /home/developer/.rustup
+
+  # Cloud-init to install Rust toolchain
+  user.user-data: |
+    #cloud-config
+    package_update: true
+    packages:
+      - curl
+      - build-essential
+      - pkg-config
+      - libssl-dev
+    runcmd:
+      # Install Rust via rustup
+      - |
+        su - developer -c '
+          curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup component add rustfmt clippy rust-analyzer
+          cargo install cargo-watch cargo-edit cargo-expand
+        '
+
+description: Rust development stack
+name: rust

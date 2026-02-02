@@ -1,0 +1,51 @@
+# =============================================================================
+# Base Configuration - Packages installed in ALL cdev images
+# =============================================================================
+# Edit this file to customize what's installed in every image.
+# Changes take effect when you rebuild images with: cdev build <stack>
+
+# System packages installed via apt
+apt:
+  # Essential tools
+  - curl
+  - wget
+  - git
+  - vim
+  - nano
+  - jq
+  - htop
+  - tree
+  - unzip
+
+  # Build essentials
+  - build-essential
+  - ca-certificates
+  - gnupg
+
+  # SSH server (for VS Code Remote)
+  - openssh-server
+
+  # System utilities
+  - sudo
+
+# Commands to run after apt packages are installed
+# Each command runs as root in the container
+post_apt_commands:
+  # Install GitHub CLI
+  - |
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
+      https://cli.github.com/packages stable main" \
+      | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+    apt-get update
+    apt-get install -y gh
+
+# NPM packages installed globally (requires Node.js)
+# Node.js is installed automatically if npm packages are specified
+npm_global:
+  - "@anthropic-ai/claude-code"
+
+# Commands to run as the developer user after setup
+developer_commands: []

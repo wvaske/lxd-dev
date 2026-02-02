@@ -1,0 +1,21 @@
+# =============================================================================
+# Go Stack Configuration
+# =============================================================================
+# Edit this file to customize Go development environments.
+# Changes take effect when you rebuild: cdev build go
+
+# Go version to install
+go_version: "1.22.0"
+
+# System packages via apt
+apt: []
+
+# Commands to install Go (runs as root)
+post_apt_commands:
+  - |
+    GO_VERSION="1.22.0"
+    curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
+    echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /etc/profile.d/golang.sh
+
+# Commands to run as developer user
+developer_commands: []

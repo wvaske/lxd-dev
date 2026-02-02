@@ -1,0 +1,33 @@
+# Go stack profile - apply on top of claude-dev base
+# Usage: lxc profile create go && lxc profile edit go < profiles/stacks/go.yaml
+
+config:
+  # Go specific environment
+  environment.GOPATH: /home/developer/go
+  environment.GOBIN: /home/developer/go/bin
+
+  # Cloud-init to install Go toolchain
+  user.user-data: |
+    #cloud-config
+    package_update: true
+    packages:
+      - curl
+      - build-essential
+    runcmd:
+      # Install Go
+      - |
+        GO_VERSION="1.22.0"
+        curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xzf -
+        echo 'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' >> /home/developer/.bashrc
+        chown developer:developer /home/developer/.bashrc
+      # Install Go tools
+      - |
+        su - developer -c '
+          export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+          go install golang.org/x/tools/gopls@latest
+          go install github.com/go-delve/delve/cmd/dlv@latest
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        '
+
+description: Go development stack
+name: go

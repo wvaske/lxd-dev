@@ -1,0 +1,1467 @@
+#!/bin/bash
+#
+# cdev - Claude Code Development Environment Manager
+#
+# A CLI for managing LXD-based sandboxed development environments
+# with Claude Code pre-installed.
+#
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Colors for output (disabled if not a terminal)
+if [[ -t 1 ]]; then
+    RED=$'\033[0;31m'
+    GREEN=$'\033[0;32m'
+    YELLOW=$'\033[0;33m'
+    BLUE=$'\033[0;34m'
+    BOLD=$'\033[1m'
+    DIM=$'\033[2m'
+    RESET=$'\033[0m'
+else
+    RED='' GREEN='' YELLOW='' BLUE='' BOLD='' DIM='' RESET=''
+fi
+
+# =============================================================================
+# Help Functions
+# =============================================================================
+
+show_main_help() {
+    cat << EOF
+${BOLD}cdev${RESET} - Claude Code Development Environment Manager
+
+${BOLD}USAGE${RESET}
+    cdev <command> [options] [arguments]
+
+${BOLD}COMMANDS${RESET}
+    ${GREEN}setup${RESET}       Initialize LXD profiles and download base images (run once)
+    ${GREEN}build${RESET}       Build a custom base image with Claude Code pre-installed
+    ${GREEN}create${RESET}      Create a new standalone dev container
+    ${GREEN}worktree${RESET}    Create container + git worktree for parallel branch work
+    ${GREEN}enter${RESET}       Enter a container's shell interactively
+    ${GREEN}list${RESET}        List all dev containers and their status
+    ${GREEN}images${RESET}      List available base images
+    ${GREEN}status${RESET}      Show worktree environments for a repository
+    ${GREEN}snapshot${RESET}    Create, restore, or list container snapshots
+    ${GREEN}vscode${RESET}      Connect VS Code Remote-SSH to a container
+    ${GREEN}port${RESET}        Forward ports between host and container
+    ${GREEN}refresh${RESET}     Push latest shell config to existing containers
+    ${GREEN}destroy${RESET}     Remove a container (and optionally its worktree)
+    ${GREEN}exec${RESET}        Run a command in a container
+
+${BOLD}GLOBAL OPTIONS${RESET}
+    -h, --help      Show help for a command
+    -v, --version   Show version information
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# First-time setup${RESET}
+    cdev setup
+
+    ${DIM}# Create a Python container for a project${RESET}
+    cdev create my-project --stack python
+
+    ${DIM}# Create parallel worktree environments from GitHub${RESET}
+    cdev worktree wvaske/dlio_benchmark feature/auth --stack python
+    cdev worktree wvaske/dlio_benchmark bugfix/123 --stack python
+
+    ${DIM}# Enter a container${RESET}
+    cdev enter my-project
+
+    ${DIM}# Run commands across all worktree containers${RESET}
+    cdev status ~/code/myrepo --exec "git pull"
+
+    ${DIM}# Snapshot before risky changes${RESET}
+    cdev snapshot my-project save before-refactor
+    cdev snapshot my-project restore before-refactor
+
+${BOLD}DOCUMENTATION${RESET}
+    See README.md for detailed documentation and workflows.
+
+Run 'cdev <command> --help' for detailed help on a specific command.
+EOF
+}
+
+show_setup_help() {
+    cat << EOF
+${BOLD}cdev setup${RESET} - Initialize LXD for Claude Code development
+
+${BOLD}USAGE${RESET}
+    cdev setup [options]
+
+${BOLD}DESCRIPTION${RESET}
+    One-time setup that:
+    • Creates LXD profiles (claude-dev, nodejs, python, rust, go)
+    • Downloads Ubuntu 24.04 base image
+    • Configures cloud-init for Claude Code installation
+    • Sets up SSH key mounting for git operations
+
+${BOLD}OPTIONS${RESET}
+    -h, --help    Show this help message
+
+${BOLD}PREREQUISITES${RESET}
+    Before running setup, ensure LXD is installed and initialized:
+
+        sudo snap install lxd
+        sudo lxd init --auto
+        sudo usermod -aG lxd \$USER
+        newgrp lxd  ${DIM}# or logout/login${RESET}
+
+${BOLD}EXAMPLES${RESET}
+    cdev setup
+EOF
+}
+
+show_build_help() {
+    cat << EOF
+${BOLD}cdev build${RESET} - Build a custom base image from config files
+
+${BOLD}USAGE${RESET}
+    cdev build <stack> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    stack         Development stack: nodejs, python, rust, go
+
+${BOLD}OPTIONS${RESET}
+    --alias NAME  Image alias (default: cdev-<stack>)
+    --with-auth   Launch interactive shell to authenticate Claude Code and gh
+    --dry-run     Show what would be installed without building
+    --no-cleanup  Keep build container after image creation
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Builds a custom LXD image using config files:
+      configs/base.yaml              - Packages for ALL images
+      configs/stacks/<stack>.yaml    - Stack-specific packages
+
+    Edit these YAML files to customize what gets installed.
+
+${BOLD}CONFIG FILES${RESET}
+    configs/base.yaml         Common packages (git, gh, claude-code, etc.)
+    configs/stacks/python.yaml   Python packages (pip, pytest, black, etc.)
+    configs/stacks/nodejs.yaml   Node.js packages (typescript, eslint, etc.)
+    configs/stacks/rust.yaml     Rust toolchain (rustup, cargo, clippy)
+    configs/stacks/go.yaml       Go toolchain
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Preview what would be installed${RESET}
+    cdev build python --dry-run
+
+    ${DIM}# Build Python image${RESET}
+    cdev build python
+
+    ${DIM}# Build with authentication${RESET}
+    cdev build python --with-auth
+
+${BOLD}USING BUILT IMAGES${RESET}
+    After building, create containers with:
+        cdev create my-project --image cdev-python
+EOF
+}
+
+show_images_help() {
+    cat << EOF
+${BOLD}cdev images${RESET} - List available base images
+
+${BOLD}USAGE${RESET}
+    cdev images [options]
+
+${BOLD}OPTIONS${RESET}
+    --all         Show all LXD images, not just cdev images
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Lists base images that can be used with 'cdev create --image'.
+
+    Images prefixed with 'cdev-' are custom images built with 'cdev build'.
+    The 'ubuntu-base' image is the default vanilla Ubuntu image.
+
+${BOLD}EXAMPLES${RESET}
+    cdev images
+    cdev images --all
+EOF
+}
+
+show_create_help() {
+    cat << EOF
+${BOLD}cdev create${RESET} - Create a new standalone development container
+
+${BOLD}USAGE${RESET}
+    cdev create <name> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    name          Name for the container (alphanumeric and hyphens only)
+
+${BOLD}OPTIONS${RESET}
+    --stack STK   Development stack: nodejs, python, rust, go (default: nodejs)
+    --image IMG   Base image to use (default: ubuntu-base, or cdev-<stack> if exists)
+    --cpu N       CPU core limit (default: 4)
+    --memory SZ   Memory limit, e.g., 8GB, 16GB (default: 8GB)
+    --disk SZ     Disk size limit (default: 50GB)
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Creates a standalone container with the specified development stack.
+
+    If a custom image exists for the stack (e.g., cdev-python), it will be
+    used automatically for faster startup. Otherwise, uses ubuntu-base and
+    installs packages on first boot.
+
+    For working on multiple branches of the same repo simultaneously,
+    use 'cdev worktree' instead.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Basic Node.js container${RESET}
+    cdev create my-api --stack nodejs
+
+    ${DIM}# Python container (uses cdev-python if available)${RESET}
+    cdev create ml-project --stack python --memory 16GB --cpu 8
+
+    ${DIM}# Use specific custom image${RESET}
+    cdev create my-project --image cdev-python
+
+    ${DIM}# Force vanilla Ubuntu (skip custom image)${RESET}
+    cdev create my-project --stack python --image ubuntu-base
+EOF
+}
+
+show_worktree_help() {
+    cat << EOF
+${BOLD}cdev worktree${RESET} - Create container with git worktree for parallel development
+
+${BOLD}USAGE${RESET}
+    cdev worktree <repo> <branch> [options]
+    cdev worktree <repo-path> <branch> [options]
+    cdev worktree <repo-path> --list
+    cdev worktree <repo-path> <branch> --destroy
+
+${BOLD}ARGUMENTS${RESET}
+    repo          GitHub repo (owner/repo) or local path to git repository
+    branch        Branch name (created from --base if doesn't exist)
+
+${BOLD}OPTIONS${RESET}
+    --stack STK     Development stack: nodejs, python, rust, go (auto-detected if omitted)
+    --image IMG     Base image (default: cdev-<stack> if exists, else ubuntu-base)
+    --cpu N         CPU core limit (default: 4)
+    --memory SZ     Memory limit (default: 8GB)
+    --base BRANCH   Base branch for new branches (default: main)
+    --name NAME     Custom container name (default: <repo>-<branch>)
+    --list          List all worktree environments for a repo
+    --destroy       Remove container and worktree
+    --clone-dir D   Directory for cloning repos (default: ~/Projects)
+    -h, --help      Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Creates a git worktree and dedicated container for parallel branch work.
+    Multiple developers (or Claude sessions) can work on different branches
+    of the same repo simultaneously, each in isolated containers.
+
+    The worktree is bind-mounted into the container, so:
+    • Changes appear instantly on host
+    • Commit/push from container or host
+    • Git history is shared (efficient storage)
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Create from GitHub repo (auto-clones if needed)${RESET}
+    cdev worktree wvaske/dlio_benchmark feature/auth --stack python
+
+    ${DIM}# Create from local repo${RESET}
+    cdev worktree ~/code/myapp feature/new-api
+
+    ${DIM}# Create new branch from main${RESET}
+    cdev worktree ~/code/myapp feature/experiment --base main
+
+    ${DIM}# List all worktree environments${RESET}
+    cdev worktree ~/code/myapp --list
+
+    ${DIM}# Destroy worktree environment${RESET}
+    cdev worktree ~/code/myapp feature/auth --destroy
+EOF
+}
+
+show_enter_help() {
+    cat << EOF
+${BOLD}cdev enter${RESET} - Enter a container's shell interactively
+
+${BOLD}USAGE${RESET}
+    cdev enter <name> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    name          Container name
+
+${BOLD}OPTIONS${RESET}
+    --root        Enter as root user instead of developer
+    --ssh         Connect via SSH instead of lxc exec
+    --cmd CMD     Run a single command instead of interactive shell
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Opens an interactive shell in the specified container.
+    By default, enters as the 'developer' user with sudo access.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Interactive shell as developer${RESET}
+    cdev enter my-project
+
+    ${DIM}# Run a single command${RESET}
+    cdev enter my-project --cmd "git status"
+
+    ${DIM}# Enter as root for system changes${RESET}
+    cdev enter my-project --root
+
+    ${DIM}# Connect via SSH (useful for some tools)${RESET}
+    cdev enter my-project --ssh
+EOF
+}
+
+show_list_help() {
+    cat << EOF
+${BOLD}cdev list${RESET} - List all development containers
+
+${BOLD}USAGE${RESET}
+    cdev list [options]
+
+${BOLD}OPTIONS${RESET}
+    --all         Show all LXD containers, not just dev containers
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Shows all Claude Code development containers with their status,
+    IP addresses, and snapshot counts.
+
+${BOLD}EXAMPLES${RESET}
+    cdev list
+EOF
+}
+
+show_status_help() {
+    cat << EOF
+${BOLD}cdev status${RESET} - Show and manage worktree environments for a repository
+
+${BOLD}USAGE${RESET}
+    cdev status <repo-path> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    repo-path     Path to the main git repository
+
+${BOLD}OPTIONS${RESET}
+    --exec CMD    Run command in all running worktree containers
+    --start-all   Start all stopped worktree containers
+    --stop-all    Stop all running worktree containers
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Shows status of all worktree environments associated with a repository,
+    including their containers, IPs, and branches.
+
+    Use --exec to run commands across all containers simultaneously.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Show status${RESET}
+    cdev status ~/code/myrepo
+
+    ${DIM}# Pull latest changes in all containers${RESET}
+    cdev status ~/code/myrepo --exec "git pull origin main"
+
+    ${DIM}# Run tests across all branches${RESET}
+    cdev status ~/code/myrepo --exec "npm test"
+
+    ${DIM}# Stop all for the day${RESET}
+    cdev status ~/code/myrepo --stop-all
+EOF
+}
+
+show_snapshot_help() {
+    cat << EOF
+${BOLD}cdev snapshot${RESET} - Manage container snapshots
+
+${BOLD}USAGE${RESET}
+    cdev snapshot <container> <action> [name]
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+    action        One of: save, restore, list, delete
+    name          Snapshot name (required for save, restore, delete)
+
+${BOLD}OPTIONS${RESET}
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Snapshots capture the complete container state, allowing you to:
+    • Save state before risky operations
+    • Restore if something goes wrong
+    • Create checkpoints during development
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Save snapshot before refactoring${RESET}
+    cdev snapshot my-project save before-refactor
+
+    ${DIM}# Restore if things go wrong${RESET}
+    cdev snapshot my-project restore before-refactor
+
+    ${DIM}# List all snapshots${RESET}
+    cdev snapshot my-project list
+
+    ${DIM}# Delete old snapshot${RESET}
+    cdev snapshot my-project delete old-snapshot
+EOF
+}
+
+show_vscode_help() {
+    cat << EOF
+${BOLD}cdev vscode${RESET} - Connect VS Code to a container via Remote-SSH
+
+${BOLD}USAGE${RESET}
+    cdev vscode <container> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+
+${BOLD}OPTIONS${RESET}
+    --folder P    Folder to open in container (default: /home/developer/workspace)
+    --setup-only  Configure SSH only, don't launch VS Code
+    -h, --help    Show this help message
+
+${BOLD}PREREQUISITES${RESET}
+    Install the "Remote - SSH" VS Code extension:
+    ms-vscode-remote.remote-ssh
+
+${BOLD}DESCRIPTION${RESET}
+    Configures SSH and opens VS Code connected to the container.
+    This allows using VS Code's full IDE features while code runs
+    in the isolated container.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Open VS Code connected to container${RESET}
+    cdev vscode my-project
+
+    ${DIM}# Open specific folder${RESET}
+    cdev vscode my-project --folder /home/developer/workspace/myrepo
+
+    ${DIM}# Just configure SSH (for manual connection)${RESET}
+    cdev vscode my-project --setup-only
+EOF
+}
+
+show_port_help() {
+    cat << EOF
+${BOLD}cdev port${RESET} - Forward ports between host and container
+
+${BOLD}USAGE${RESET}
+    cdev port <container> add <host-port>[:<container-port>]
+    cdev port <container> list
+    cdev port <container> remove <host-port>
+
+${BOLD}ARGUMENTS${RESET}
+    container         Container name
+    host-port         Port on the host to listen on
+    container-port    Port inside the container (default: same as host-port)
+
+${BOLD}OPTIONS${RESET}
+    --host ADDR     Host bind address (default: 0.0.0.0)
+    --protocol P    Protocol: tcp, udp (default: tcp)
+    -h, --help      Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Manages port forwards from the host to a container using LXD proxy
+    devices. Forwarded ports are accessible from outside the host machine.
+
+    Ports persist across container restarts. Use 'remove' to delete them.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Forward host:5173 -> container:5173${RESET}
+    cdev port my-app add 5173
+
+    ${DIM}# Forward host:8080 -> container:3000${RESET}
+    cdev port my-app add 8080:3000
+
+    ${DIM}# Forward UDP port${RESET}
+    cdev port my-app add 5173 --protocol udp
+
+    ${DIM}# Only listen on localhost${RESET}
+    cdev port my-app add 5173 --host 127.0.0.1
+
+    ${DIM}# List all port forwards for a container${RESET}
+    cdev port my-app list
+
+    ${DIM}# Remove a port forward${RESET}
+    cdev port my-app remove 5173
+EOF
+}
+
+show_refresh_help() {
+    cat << EOF
+${BOLD}cdev refresh${RESET} - Push latest shell config to existing containers
+
+${BOLD}USAGE${RESET}
+    cdev refresh <container>
+    cdev refresh --all
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name (or --all for all containers)
+
+${BOLD}OPTIONS${RESET}
+    --all         Refresh all running containers
+    --bashrc      Only update bashrc (default: all config)
+    --gitconfig   Only update gitconfig
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Pushes the latest shell configuration (colored prompt, aliases, etc.)
+    from templates/bashrc-cdev.sh to existing containers.
+
+    Use this after editing templates/bashrc-cdev.sh to update containers
+    without recreating them.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# Refresh single container${RESET}
+    cdev refresh my-project
+
+    ${DIM}# Refresh all running containers${RESET}
+    cdev refresh --all
+EOF
+}
+
+show_destroy_help() {
+    cat << EOF
+${BOLD}cdev destroy${RESET} - Remove a container
+
+${BOLD}USAGE${RESET}
+    cdev destroy <container> [options]
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+
+${BOLD}OPTIONS${RESET}
+    --force       Skip confirmation prompt
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Stops and removes a container and all its snapshots.
+
+    For worktree containers, use 'cdev worktree <repo> <branch> --destroy'
+    to also remove the git worktree.
+
+${BOLD}EXAMPLES${RESET}
+    cdev destroy my-project
+    cdev destroy my-project --force
+EOF
+}
+
+show_exec_help() {
+    cat << EOF
+${BOLD}cdev exec${RESET} - Run a command in a container
+
+${BOLD}USAGE${RESET}
+    cdev exec <container> <command...>
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+    command       Command to run (with arguments)
+
+${BOLD}OPTIONS${RESET}
+    --root        Run as root instead of developer
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Runs a command in the container and returns the output.
+    By default, runs as the 'developer' user.
+
+${BOLD}EXAMPLES${RESET}
+    cdev exec my-project git status
+    cdev exec my-project npm test
+    cdev exec my-project --root apt update
+EOF
+}
+
+# =============================================================================
+# Command Implementations
+# =============================================================================
+
+cmd_setup() {
+    # Check for help flag
+    for arg in "$@"; do
+        case $arg in
+            -h|--help) show_setup_help; exit 0 ;;
+        esac
+    done
+
+    echo -e "${BOLD}=== Claude Code Environment Setup ===${RESET}"
+    echo
+
+    # Check if LXD is installed
+    if ! command -v lxc &> /dev/null; then
+        echo -e "${RED}Error: LXD is not installed.${RESET}"
+        echo "Install with:"
+        echo "  sudo snap install lxd"
+        echo "  sudo lxd init --auto"
+        echo "  sudo usermod -aG lxd \$USER"
+        exit 1
+    fi
+
+    # Check if LXD is initialized
+    if ! lxc storage list &> /dev/null; then
+        echo -e "${RED}Error: LXD is not accessible.${RESET}"
+        echo "Either run 'sudo lxd init' or add yourself to the lxd group:"
+        echo "  sudo usermod -aG lxd \$USER"
+        echo "  newgrp lxd  # or logout/login"
+        exit 1
+    fi
+
+    echo -e "${BLUE}[1/5]${RESET} Creating base profile: claude-dev"
+    # Expand environment variables in profile
+    PROFILE_TEMP=$(mktemp)
+    envsubst < "$SCRIPT_DIR/profiles/claude-dev.yaml" > "$PROFILE_TEMP"
+
+    if lxc profile show claude-dev &> /dev/null; then
+        echo "       Profile exists, updating..."
+        lxc profile edit claude-dev < "$PROFILE_TEMP"
+    else
+        lxc profile create claude-dev
+        lxc profile edit claude-dev < "$PROFILE_TEMP"
+    fi
+    rm -f "$PROFILE_TEMP"
+
+    echo -e "${BLUE}[2/5]${RESET} Creating stack profiles..."
+    for stack in nodejs python rust go; do
+        profile_file="$SCRIPT_DIR/profiles/stacks/${stack}.yaml"
+        if [ -f "$profile_file" ]; then
+            if lxc profile show "$stack" &> /dev/null; then
+                echo "       Updating: $stack"
+                lxc profile edit "$stack" < "$profile_file"
+            else
+                echo "       Creating: $stack"
+                lxc profile create "$stack"
+                lxc profile edit "$stack" < "$profile_file"
+            fi
+        fi
+    done
+
+    echo -e "${BLUE}[3/5]${RESET} Preparing cloud-init configurations..."
+    mkdir -p "$SCRIPT_DIR/.cache"
+    cat "$SCRIPT_DIR/cloud-init/base.yaml" > "$SCRIPT_DIR/.cache/cloud-init-merged.yaml"
+    echo "" >> "$SCRIPT_DIR/.cache/cloud-init-merged.yaml"
+    cat "$SCRIPT_DIR/cloud-init/claude-code.yaml" >> "$SCRIPT_DIR/.cache/cloud-init-merged.yaml"
+
+    echo -e "${BLUE}[4/5]${RESET} Downloading base image (ubuntu:24.04)..."
+    lxc image copy ubuntu:24.04 local: --alias ubuntu-base --auto-update 2>/dev/null || echo "       (image already exists)"
+
+    echo -e "${BLUE}[5/5]${RESET} Setting up shell integration..."
+    # Remove old aliases if present (from previous versions)
+    local ALIAS_FILE="$HOME/.bash_aliases"
+    if grep -q "claude-dev aliases" "$ALIAS_FILE" 2>/dev/null; then
+        sed -i '/# claude-dev aliases/,/^$/d' "$ALIAS_FILE"
+        echo "       Removed old aliases"
+    fi
+
+    # Add to PATH and completions via .bashrc if not already present
+    local BASHRC="$HOME/.bashrc"
+    if ! grep -q "cdev - Claude Code" "$BASHRC" 2>/dev/null; then
+        cat >> "$BASHRC" << EOF
+
+# cdev - Claude Code Development Environments
+export PATH="$SCRIPT_DIR:\$PATH"
+source "$SCRIPT_DIR/completions/cdev.bash" 2>/dev/null
+EOF
+        echo "       Added cdev to PATH"
+        echo "       Added tab completion"
+        echo
+        echo -e "${YELLOW}Run 'source ~/.bashrc' or open a new terminal to activate${RESET}"
+    else
+        echo "       Shell already configured"
+    fi
+
+    echo
+    echo -e "${GREEN}Setup complete!${RESET}"
+    echo
+    echo "Try these commands:"
+    echo "  cdev create my-project --stack python"
+    echo "  cdev enter my-project"
+    echo
+    echo "Tab completion is available for commands, containers, and options."
+}
+
+cmd_build() {
+    # Delegate to build-image.sh script
+    exec "$SCRIPT_DIR/scripts/build-image.sh" "$@"
+}
+
+cmd_images() {
+    local show_all=false
+
+    for arg in "$@"; do
+        case $arg in
+            -h|--help) show_images_help; exit 0 ;;
+            --all) show_all=true ;;
+        esac
+    done
+
+    echo -e "${BOLD}Available Images${RESET}"
+    echo
+
+    if [[ "$show_all" == true ]]; then
+        lxc image list
+    else
+        # Show cdev-* images and ubuntu-base
+        echo "Custom images (built with 'cdev build'):"
+        local custom_images=$(lxc image list --format csv -c l | grep "^cdev-" || true)
+        if [[ -n "$custom_images" ]]; then
+            lxc image list cdev-
+        else
+            echo "  (none - run 'cdev build <stack>' to create one)"
+        fi
+        echo
+        echo "Base images:"
+        lxc image list ubuntu-base 2>/dev/null || echo "  ubuntu-base (run 'cdev setup' to download)"
+    fi
+}
+
+cmd_create() {
+    local name=""
+    local stack="nodejs"
+    local image=""
+    local cpu="4"
+    local memory="8GB"
+    local disk="50GB"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_create_help; exit 0 ;;
+            --stack) stack="$2"; shift 2 ;;
+            --image) image="$2"; shift 2 ;;
+            --cpu) cpu="$2"; shift 2 ;;
+            --memory) memory="$2"; shift 2 ;;
+            --disk) disk="$2"; shift 2 ;;
+            -*) echo "${RED}Unknown option: $1${RESET}"; show_create_help; exit 1 ;;
+            *) name="$1"; shift ;;
+        esac
+    done
+
+    if [[ -z "$name" ]]; then
+        echo "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev create <name> [--stack nodejs|python|rust|go]"
+        exit 1
+    fi
+
+    # Validate stack
+    case $stack in
+        nodejs|python|rust|go) ;;
+        *) echo "${RED}Error: Invalid stack '$stack'. Choose: nodejs, python, rust, go${RESET}"; exit 1 ;;
+    esac
+
+    # Auto-detect image if not specified
+    if [[ -z "$image" ]]; then
+        # Check if custom image exists for this stack
+        if lxc image info "cdev-${stack}" &>/dev/null; then
+            image="cdev-${stack}"
+            echo "${GREEN}Using custom image: $image${RESET}"
+        else
+            image="ubuntu-base"
+        fi
+    fi
+
+    # Verify image exists
+    if ! lxc image info "$image" &>/dev/null; then
+        echo "${RED}Error: Image '$image' not found${RESET}"
+        echo "Run 'cdev images' to see available images"
+        echo "Run 'cdev setup' to download ubuntu-base"
+        echo "Run 'cdev build $stack' to create a custom image"
+        exit 1
+    fi
+
+    echo -e "${BOLD}Creating container: $name${RESET}"
+    echo "  Image:  $image"
+    echo "  Stack:  $stack"
+    echo "  CPU:    $cpu cores"
+    echo "  Memory: $memory"
+    echo
+
+    # Determine which profiles to apply
+    local profiles="--profile default --profile claude-dev"
+
+    # If using vanilla ubuntu-base, also apply stack profile for cloud-init setup
+    if [[ "$image" == "ubuntu-base" ]]; then
+        profiles="$profiles --profile $stack"
+    fi
+
+    lxc launch "$image" "$name" \
+        $profiles \
+        --config "limits.cpu=$cpu" \
+        --config "limits.memory=$memory"
+
+    echo -e "${GREEN}Container '$name' created!${RESET}"
+    echo
+    echo "Enter with: cdev enter $name"
+}
+
+cmd_worktree() {
+    local repo=""
+    local branch=""
+    local stack=""
+    local image=""
+    local cpu="4"
+    local memory="8GB"
+    local base_branch="main"
+    local container_name=""
+    local clone_dir="$HOME/Projects"
+    local action="create"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_worktree_help; exit 0 ;;
+            --stack) stack="$2"; shift 2 ;;
+            --image) image="$2"; shift 2 ;;
+            --cpu) cpu="$2"; shift 2 ;;
+            --memory) memory="$2"; shift 2 ;;
+            --base) base_branch="$2"; shift 2 ;;
+            --name) container_name="$2"; shift 2 ;;
+            --clone-dir) clone_dir="$2"; shift 2 ;;
+            --list) action="list"; shift ;;
+            --destroy) action="destroy"; shift ;;
+            -*) echo -e "${RED}Unknown option: $1${RESET}"; show_worktree_help; exit 1 ;;
+            *)
+                if [ -z "$repo" ]; then
+                    repo="$1"
+                elif [ -z "$branch" ]; then
+                    branch="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$repo" ]; then
+        echo -e "${RED}Error: Repository is required${RESET}"
+        echo "Usage: cdev worktree <repo> <branch> [options]"
+        exit 1
+    fi
+
+    # Handle --list action (only needs repo)
+    if [ "$action" = "list" ]; then
+        exec "$SCRIPT_DIR/scripts/worktree-env.sh" "$repo" --list
+    fi
+
+    if [ -z "$branch" ]; then
+        echo -e "${RED}Error: Branch name is required${RESET}"
+        echo "Usage: cdev worktree <repo> <branch> [options]"
+        exit 1
+    fi
+
+    # Handle --destroy action
+    if [ "$action" = "destroy" ]; then
+        exec "$SCRIPT_DIR/scripts/worktree-env.sh" "$repo" "$branch" --destroy
+    fi
+
+    # Check if repo is a GitHub reference (owner/repo) or local path
+    if [[ "$repo" =~ ^[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+$ ]]; then
+        # GitHub repo - use gh-worktree-env.sh
+        local args=("$repo" "$branch")
+        [ -n "$stack" ] && args+=(--stack "$stack")
+        [ -n "$image" ] && args+=(--image "$image")
+        args+=(--cpu "$cpu" --memory "$memory" --base "$base_branch" --clone-dir "$clone_dir")
+        exec "$SCRIPT_DIR/scripts/gh-worktree-env.sh" "${args[@]}"
+    else
+        # Local path - use worktree-env.sh directly
+        local args=("$repo" "$branch")
+        [ -n "$stack" ] && args+=(--stack "$stack")
+        [ -n "$image" ] && args+=(--image "$image")
+        [ -n "$container_name" ] && args+=(--name "$container_name")
+        args+=(--cpu "$cpu" --memory "$memory" --base "$base_branch")
+        exec "$SCRIPT_DIR/scripts/worktree-env.sh" "${args[@]}"
+    fi
+}
+
+cmd_enter() {
+    local name=""
+    local as_root=false
+    local use_ssh=false
+    local cmd=""
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_enter_help; exit 0 ;;
+            --root) as_root=true; shift ;;
+            --ssh) use_ssh=true; shift ;;
+            --cmd) cmd="$2"; shift 2 ;;
+            -*) echo -e "${RED}Unknown option: $1${RESET}"; show_enter_help; exit 1 ;;
+            *) name="$1"; shift ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev enter <name>"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$name" &> /dev/null; then
+        echo -e "${RED}Error: Container '$name' not found${RESET}"
+        echo "Run 'cdev list' to see available containers"
+        exit 1
+    fi
+
+    # Start if stopped
+    local state=$(lxc list "$name" --format csv -c s)
+    if [ "$state" != "RUNNING" ]; then
+        echo "Starting container..."
+        lxc start "$name"
+        sleep 2
+    fi
+
+    if [ "$use_ssh" = true ]; then
+        local ip=$(lxc list "$name" --format csv -c 4 | cut -d' ' -f1)
+        if [ -z "$ip" ] || [ "$ip" = "-" ]; then
+            echo -e "${RED}Error: Container has no IP address yet. Try again in a moment.${RESET}"
+            exit 1
+        fi
+        if [ -n "$cmd" ]; then
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null developer@"$ip" "$cmd"
+        else
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null developer@"$ip"
+        fi
+    else
+        if [ "$as_root" = true ]; then
+            if [ -n "$cmd" ]; then
+                lxc exec "$name" -- bash -c "$cmd"
+            else
+                lxc exec "$name" -- bash
+            fi
+        else
+            if [ -n "$cmd" ]; then
+                lxc exec "$name" -- su - developer -c "$cmd"
+            else
+                lxc exec "$name" -- su - developer
+            fi
+        fi
+    fi
+}
+
+cmd_list() {
+    local show_all=false
+
+    for arg in "$@"; do
+        case $arg in
+            -h|--help) show_list_help; exit 0 ;;
+            --all) show_all=true ;;
+        esac
+    done
+
+    echo -e "${BOLD}Development Containers${RESET}"
+    echo
+
+    if [ "$show_all" = true ]; then
+        lxc list
+    else
+        lxc list
+    fi
+}
+
+cmd_status() {
+    local repo_path=""
+    local exec_cmd=""
+    local action="status"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_status_help; exit 0 ;;
+            --exec) exec_cmd="$2"; action="exec"; shift 2 ;;
+            --start-all) action="start"; shift ;;
+            --stop-all) action="stop"; shift ;;
+            -*) echo -e "${RED}Unknown option: $1${RESET}"; show_status_help; exit 1 ;;
+            *) repo_path="$1"; shift ;;
+        esac
+    done
+
+    if [ -z "$repo_path" ]; then
+        echo -e "${RED}Error: Repository path is required${RESET}"
+        echo "Usage: cdev status <repo-path>"
+        exit 1
+    fi
+
+    case "$action" in
+        status) exec "$SCRIPT_DIR/scripts/worktree-status.sh" "$repo_path" ;;
+        exec) exec "$SCRIPT_DIR/scripts/worktree-status.sh" "$repo_path" --exec "$exec_cmd" ;;
+        start) exec "$SCRIPT_DIR/scripts/worktree-status.sh" "$repo_path" --start-all ;;
+        stop) exec "$SCRIPT_DIR/scripts/worktree-status.sh" "$repo_path" --stop-all ;;
+    esac
+}
+
+cmd_snapshot() {
+    local container=""
+    local action=""
+    local snap_name=""
+
+    for arg in "$@"; do
+        case $arg in
+            -h|--help) show_snapshot_help; exit 0 ;;
+        esac
+    done
+
+    container="${1:-}"
+    action="${2:-}"
+    snap_name="${3:-}"
+
+    if [ -z "$container" ] || [ -z "$action" ]; then
+        echo -e "${RED}Error: Container and action are required${RESET}"
+        echo "Usage: cdev snapshot <container> <save|restore|list|delete> [name]"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    case "$action" in
+        save|create)
+            if [ -z "$snap_name" ]; then
+                echo -e "${RED}Error: Snapshot name is required${RESET}"
+                exit 1
+            fi
+            echo "Creating snapshot '$snap_name'..."
+            lxc snapshot "$container" "$snap_name"
+            echo -e "${GREEN}Snapshot created!${RESET}"
+            ;;
+        restore)
+            if [ -z "$snap_name" ]; then
+                echo -e "${RED}Error: Snapshot name is required${RESET}"
+                exit 1
+            fi
+            echo "Restoring snapshot '$snap_name'..."
+            lxc restore "$container" "$snap_name"
+            echo -e "${GREEN}Snapshot restored!${RESET}"
+            ;;
+        list)
+            echo -e "${BOLD}Snapshots for $container:${RESET}"
+            lxc info "$container" | grep -A 100 "^Snapshots:" | tail -n +2 | head -20
+            ;;
+        delete|remove)
+            if [ -z "$snap_name" ]; then
+                echo -e "${RED}Error: Snapshot name is required${RESET}"
+                exit 1
+            fi
+            echo "Deleting snapshot '$snap_name'..."
+            lxc delete "$container/$snap_name"
+            echo -e "${GREEN}Snapshot deleted!${RESET}"
+            ;;
+        *)
+            echo -e "${RED}Error: Unknown action '$action'${RESET}"
+            echo "Actions: save, restore, list, delete"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_vscode() {
+    local container=""
+    local folder="/home/developer/workspace"
+    local setup_only=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_vscode_help; exit 0 ;;
+            --folder) folder="$2"; shift 2 ;;
+            --setup-only) setup_only=true; shift ;;
+            -*) echo -e "${RED}Unknown option: $1${RESET}"; show_vscode_help; exit 1 ;;
+            *) container="$1"; shift ;;
+        esac
+    done
+
+    if [ -z "$container" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev vscode <container>"
+        exit 1
+    fi
+
+    local args=("$container")
+    [ "$setup_only" = true ] && args+=(--setup-only)
+    args+=(--folder "$folder")
+
+    exec "$SCRIPT_DIR/scripts/vscode-connect.sh" "${args[@]}"
+}
+
+cmd_port() {
+    local container=""
+    local action=""
+    local port_spec=""
+    local host_addr="0.0.0.0"
+    local protocol="tcp"
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_port_help; exit 0 ;;
+            --host) host_addr="$2"; shift 2 ;;
+            --protocol) protocol="$2"; shift 2 ;;
+            -*)
+                echo "${RED}Unknown option: $1${RESET}"
+                show_port_help
+                exit 1
+                ;;
+            *)
+                if [[ -z "$container" ]]; then
+                    container="$1"
+                elif [[ -z "$action" ]]; then
+                    action="$1"
+                elif [[ -z "$port_spec" ]]; then
+                    port_spec="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ -z "$container" || -z "$action" ]]; then
+        echo "${RED}Error: Container and action are required${RESET}"
+        echo "Usage: cdev port <container> <add|list|remove> [port]"
+        exit 1
+    fi
+
+    # Verify container exists
+    if ! lxc info "$container" &>/dev/null; then
+        echo "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    case "$action" in
+        add)
+            if [[ -z "$port_spec" ]]; then
+                echo "${RED}Error: Port is required${RESET}"
+                echo "Usage: cdev port $container add <host-port>[:<container-port>]"
+                exit 1
+            fi
+
+            # Parse port spec: "8080" or "8080:3000"
+            local host_port container_port
+            if [[ "$port_spec" == *:* ]]; then
+                host_port="${port_spec%%:*}"
+                container_port="${port_spec##*:}"
+            else
+                host_port="$port_spec"
+                container_port="$port_spec"
+            fi
+
+            local device_name="proxy-${protocol}-${host_port}"
+
+            # Check if device already exists
+            if lxc config device show "$container" 2>/dev/null | grep -q "^${device_name}:"; then
+                echo "${YELLOW}Port forward already exists: ${host_addr}:${host_port} -> container:${container_port}${RESET}"
+                echo "Remove it first with: cdev port $container remove $host_port"
+                exit 1
+            fi
+
+            echo "Adding port forward: ${host_addr}:${host_port} -> container:${container_port} (${protocol})"
+            lxc config device add "$container" "$device_name" proxy \
+                "listen=${protocol}:${host_addr}:${host_port}" \
+                "connect=${protocol}:127.0.0.1:${container_port}"
+
+            echo "${GREEN}Port forward added!${RESET}"
+            echo "  Access: http://${host_addr}:${host_port}"
+            ;;
+
+        list|ls)
+            echo "${BOLD}Port forwards for $container:${RESET}"
+            echo
+
+            local found=false
+            while IFS= read -r line; do
+                if [[ "$line" =~ ^proxy- ]]; then
+                    local name="${line%%:*}"
+                    local listen=$(lxc config device get "$container" "$name" listen 2>/dev/null)
+                    local connect=$(lxc config device get "$container" "$name" connect 2>/dev/null)
+                    echo "  ${GREEN}${name}${RESET}"
+                    echo "    listen:  $listen"
+                    echo "    connect: $connect"
+                    echo
+                    found=true
+                fi
+            done < <(lxc config device show "$container" 2>/dev/null | grep -E "^proxy-")
+
+            if [[ "$found" == false ]]; then
+                echo "  (no port forwards)"
+                echo
+                echo "Add one with: cdev port $container add <port>"
+            fi
+            ;;
+
+        remove|rm)
+            if [[ -z "$port_spec" ]]; then
+                echo "${RED}Error: Port is required${RESET}"
+                echo "Usage: cdev port $container remove <host-port>"
+                echo
+                echo "Current forwards:"
+                cmd_port "$container" list
+                exit 1
+            fi
+
+            # Try both tcp and udp device names
+            local removed=false
+            for proto in tcp udp; do
+                local device_name="proxy-${proto}-${port_spec}"
+                if lxc config device show "$container" 2>/dev/null | grep -q "^${device_name}:"; then
+                    echo "Removing port forward: ${device_name}"
+                    lxc config device remove "$container" "$device_name"
+                    echo "${GREEN}Port forward removed!${RESET}"
+                    removed=true
+                fi
+            done
+
+            if [[ "$removed" == false ]]; then
+                echo "${RED}Error: No port forward found for port $port_spec${RESET}"
+                echo
+                echo "Current forwards:"
+                cmd_port "$container" list
+                exit 1
+            fi
+            ;;
+
+        *)
+            echo "${RED}Error: Unknown action '$action'${RESET}"
+            echo "Actions: add, list, remove"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_refresh() {
+    local container=""
+    local refresh_all=false
+    local only_bashrc=false
+    local only_gitconfig=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_refresh_help; exit 0 ;;
+            --all) refresh_all=true; shift ;;
+            --bashrc) only_bashrc=true; shift ;;
+            --gitconfig) only_gitconfig=true; shift ;;
+            -*) echo "${RED}Unknown option: $1${RESET}"; show_refresh_help; exit 1 ;;
+            *) container="$1"; shift ;;
+        esac
+    done
+
+    if [[ "$refresh_all" == false && -z "$container" ]]; then
+        echo "${RED}Error: Container name or --all is required${RESET}"
+        echo "Usage: cdev refresh <container> or cdev refresh --all"
+        exit 1
+    fi
+
+    # Get list of containers to refresh
+    local containers=()
+    if [[ "$refresh_all" == true ]]; then
+        while IFS= read -r c; do
+            containers+=("$c")
+        done < <(lxc list --format csv -c n,s | grep ",RUNNING" | cut -d',' -f1)
+
+        if [[ ${#containers[@]} -eq 0 ]]; then
+            echo "${YELLOW}No running containers found${RESET}"
+            exit 0
+        fi
+        echo "${BOLD}Refreshing ${#containers[@]} containers...${RESET}"
+    else
+        # Verify container exists
+        if ! lxc info "$container" &>/dev/null; then
+            echo "${RED}Error: Container '$container' not found${RESET}"
+            exit 1
+        fi
+        containers=("$container")
+    fi
+
+    local bashrc_template="$SCRIPT_DIR/templates/bashrc-cdev.sh"
+
+    for c in "${containers[@]}"; do
+        echo -n "  $c: "
+
+        # Check if running
+        local state=$(lxc list "$c" --format csv -c s)
+        if [[ "$state" != "RUNNING" ]]; then
+            echo "${YELLOW}skipped (not running)${RESET}"
+            continue
+        fi
+
+        local updated=()
+
+        # Check if developer user exists
+        if ! lxc exec "$c" -- id developer &>/dev/null; then
+            echo "${YELLOW}skipped (no developer user)${RESET}"
+            continue
+        fi
+
+        # Update bashrc
+        if [[ "$only_gitconfig" == false && -f "$bashrc_template" ]]; then
+            # Ensure .profile exists (needed for login shells to source .bashrc)
+            lxc exec "$c" -- bash -c '
+                if [[ ! -f /home/developer/.profile ]]; then
+                    cp /etc/skel/.profile /home/developer/.profile 2>/dev/null || true
+                    chown developer:developer /home/developer/.profile 2>/dev/null || true
+                fi
+            ' 2>/dev/null || true
+
+            # Reset bashrc to default and append cdev config (cleaner than sed surgery)
+            lxc exec "$c" -- bash -c '
+                cp /etc/skel/.bashrc /home/developer/.bashrc 2>/dev/null || true
+                chown developer:developer /home/developer/.bashrc 2>/dev/null || true
+            ' 2>/dev/null || true
+
+            if lxc file push "$bashrc_template" "$c/tmp/bashrc-cdev.sh" 2>/dev/null; then
+                lxc exec "$c" -- bash -c '
+                    cat /tmp/bashrc-cdev.sh >> /home/developer/.bashrc 2>/dev/null || true
+                    chown developer:developer /home/developer/.bashrc 2>/dev/null || true
+                    rm -f /tmp/bashrc-cdev.sh
+                ' 2>/dev/null || true
+                updated+=("bashrc")
+            fi
+        fi
+
+        # Update gitconfig
+        if [[ "$only_bashrc" == false && -f "$HOME/.gitconfig" ]]; then
+            if lxc file push "$HOME/.gitconfig" "$c/home/developer/.gitconfig" 2>/dev/null; then
+                lxc exec "$c" -- chown developer:developer /home/developer/.gitconfig 2>/dev/null || true
+                updated+=("gitconfig")
+            fi
+        fi
+
+        if [[ ${#updated[@]} -gt 0 ]]; then
+            echo "${GREEN}updated (${updated[*]})${RESET}"
+        else
+            echo "${YELLOW}no changes${RESET}"
+        fi
+    done
+
+    echo
+    echo "${GREEN}Done!${RESET} Changes take effect on next shell session."
+    echo "Run 'cdev enter <container>' to start a new session."
+}
+
+cmd_destroy() {
+    local container=""
+    local force=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_destroy_help; exit 0 ;;
+            --force) force=true; shift ;;
+            -*) echo -e "${RED}Unknown option: $1${RESET}"; show_destroy_help; exit 1 ;;
+            *) container="$1"; shift ;;
+        esac
+    done
+
+    if [ -z "$container" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev destroy <container>"
+        exit 1
+    fi
+
+    local args=("$container")
+    [ "$force" = true ] && args+=(--force)
+
+    exec "$SCRIPT_DIR/scripts/destroy.sh" "${args[@]}"
+}
+
+cmd_exec() {
+    local container=""
+    local as_root=false
+    local cmd_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_exec_help; exit 0 ;;
+            --root) as_root=true; shift ;;
+            -*)
+                if [ -z "$container" ]; then
+                    echo -e "${RED}Unknown option: $1${RESET}"
+                    show_exec_help
+                    exit 1
+                else
+                    cmd_args+=("$1")
+                    shift
+                fi
+                ;;
+            *)
+                if [ -z "$container" ]; then
+                    container="$1"
+                else
+                    cmd_args+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$container" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev exec <container> <command...>"
+        exit 1
+    fi
+
+    if [ ${#cmd_args[@]} -eq 0 ]; then
+        echo -e "${RED}Error: Command is required${RESET}"
+        echo "Usage: cdev exec <container> <command...>"
+        exit 1
+    fi
+
+    # Check container exists and is running
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    local state=$(lxc list "$container" --format csv -c s)
+    if [ "$state" != "RUNNING" ]; then
+        echo -e "${RED}Error: Container '$container' is not running${RESET}"
+        echo "Start it with: cdev enter $container"
+        exit 1
+    fi
+
+    if [ "$as_root" = true ]; then
+        lxc exec "$container" -- "${cmd_args[@]}"
+    else
+        lxc exec "$container" -- su - developer -c "${cmd_args[*]}"
+    fi
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+main() {
+    # Handle global flags
+    case "${1:-}" in
+        -h|--help|help|"")
+            show_main_help
+            exit 0
+            ;;
+        -v|--version)
+            echo "cdev version $VERSION"
+            exit 0
+            ;;
+    esac
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        setup)    cmd_setup "$@" ;;
+        build)    cmd_build "$@" ;;
+        create)   cmd_create "$@" ;;
+        worktree) cmd_worktree "$@" ;;
+        enter)    cmd_enter "$@" ;;
+        list|ls)  cmd_list "$@" ;;
+        images)   cmd_images "$@" ;;
+        status)   cmd_status "$@" ;;
+        snapshot|snap) cmd_snapshot "$@" ;;
+        vscode)   cmd_vscode "$@" ;;
+        port)     cmd_port "$@" ;;
+        refresh)  cmd_refresh "$@" ;;
+        destroy|rm) cmd_destroy "$@" ;;
+        exec)     cmd_exec "$@" ;;
+        *)
+            echo "${RED}Unknown command: $command${RESET}"
+            echo "Run 'cdev --help' for usage"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
