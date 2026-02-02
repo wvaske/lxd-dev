@@ -29,6 +29,11 @@ Adding bind mount management to cdev through three new commands (mount, unmount,
 4. User can run `cdev unmount mycontainer /mnt/data` to remove a mount
 5. User can run `cdev mounts mycontainer` and see all active bind mounts with paths
 
+**Plans:** 1 plan
+
+Plans:
+- [ ] 01-01-PLAN.md — Implement mount/unmount/mounts commands with LXD device operations
+
 ---
 
 ## Phase 2: CLI Integration
@@ -46,6 +51,11 @@ Adding bind mount management to cdev through three new commands (mount, unmount,
 2. User can run `cdev mount` with no args and receive helpful error with usage info
 3. User can type `cdev moun<TAB>` and bash completes to `cdev mount`
 4. User can type `cdev mount <TAB>` and bash suggests available container names
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (created by /gsd:plan-phase 2)
 
 ---
 
