@@ -30,10 +30,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MOUNT-01 | — | Pending |
-| MOUNT-02 | — | Pending |
-| MOUNT-03 | — | Pending |
-| MOUNT-04 | — | Pending |
-| MOUNT-05 | — | Pending |
-| CLI-01 | — | Pending |
-| CLI-02 | — | Pending |
+| MOUNT-01 | Phase 1 | Pending |
+| MOUNT-02 | Phase 1 | Pending |
+| MOUNT-03 | Phase 1 | Pending |
+| MOUNT-04 | Phase 1 | Pending |
+| MOUNT-05 | Phase 1 | Pending |
+| CLI-01 | Phase 2 | Pending |
+| CLI-02 | Phase 2 | Pending |
