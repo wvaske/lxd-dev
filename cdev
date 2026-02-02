@@ -1421,6 +1421,258 @@ cmd_exec() {
     fi
 }
 
+cmd_mount() {
+    local container=""
+    local host_path=""
+    local container_path=""
+    local readonly=false
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_mount_help; exit 0 ;;
+            --readonly) readonly=true; shift ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${RESET}"
+                show_mount_help
+                exit 1
+                ;;
+            *)
+                if [ -z "$container" ]; then
+                    container="$1"
+                elif [ -z "$host_path" ]; then
+                    host_path="$1"
+                elif [ -z "$container_path" ]; then
+                    container_path="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate required arguments
+    if [ -z "$container" ] || [ -z "$host_path" ] || [ -z "$container_path" ]; then
+        echo -e "${RED}Error: Container, host path, and container path are required${RESET}"
+        echo "Usage: cdev mount <container> <host-path> <container-path> [--readonly]"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    # Check container is running
+    local state=$(lxc list "$container" --format csv -c s)
+    if [ "$state" != "RUNNING" ]; then
+        echo -e "${RED}Error: Container '$container' is not running${RESET}"
+        echo "Start it with: cdev enter $container"
+        exit 1
+    fi
+
+    # Validate host path exists
+    if [ ! -e "$host_path" ]; then
+        echo -e "${RED}Error: Host path '$host_path' does not exist${RESET}"
+        exit 1
+    fi
+
+    # Convert to absolute path
+    host_path=$(realpath "$host_path")
+
+    # Validate container path is absolute
+    if [[ ! "$container_path" = /* ]]; then
+        echo -e "${RED}Error: Container path must be absolute (start with /)${RESET}"
+        exit 1
+    fi
+
+    # Generate unique device name by sanitizing container path
+    local device_name="cdev-mount-${container_path//\//-}"
+    device_name="${device_name#cdev-mount--}" # Remove leading double dash if path starts with /
+
+    # Check if mount already exists at that path
+    if lxc config device show "$container" 2>/dev/null | grep -q "path: ${container_path}$"; then
+        echo -e "${RED}Error: A mount already exists at container path '$container_path'${RESET}"
+        echo "Use 'cdev mounts $container' to see existing mounts"
+        echo "Use 'cdev unmount $container $container_path' to remove it first"
+        exit 1
+    fi
+
+    # Build LXD device add command
+    local cmd="lxc config device add \"$container\" \"$device_name\" disk source=\"$host_path\" path=\"$container_path\""
+    if [ "$readonly" = true ]; then
+        cmd="$cmd readonly=true"
+    fi
+
+    # Execute mount
+    if eval "$cmd" 2>/dev/null; then
+        local mode="rw"
+        [ "$readonly" = true ] && mode="ro"
+        echo -e "${GREEN}Mounted${RESET} ${host_path} ${GREEN}->${RESET} ${container}:${container_path} ${DIM}(${mode})${RESET}"
+    else
+        echo -e "${RED}Error: Failed to create mount${RESET}"
+        echo "This may be due to permission issues or invalid paths"
+        exit 1
+    fi
+}
+
+cmd_unmount() {
+    local container=""
+    local mount_id=""
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_unmount_help; exit 0 ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${RESET}"
+                show_unmount_help
+                exit 1
+                ;;
+            *)
+                if [ -z "$container" ]; then
+                    container="$1"
+                elif [ -z "$mount_id" ]; then
+                    mount_id="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # Validate required arguments
+    if [ -z "$container" ] || [ -z "$mount_id" ]; then
+        echo -e "${RED}Error: Container and mount identifier are required${RESET}"
+        echo "Usage: cdev unmount <container> <device-name-or-path>"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    # Determine device name
+    local device_name=""
+
+    # Check if mount_id is a device name (starts with cdev-mount-)
+    if [[ "$mount_id" == cdev-mount-* ]]; then
+        device_name="$mount_id"
+    # Otherwise treat it as a container path
+    elif [[ "$mount_id" = /* ]]; then
+        # Find device by matching container path
+        local devices_yaml=$(lxc config device show "$container" 2>/dev/null)
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^(cdev-mount-[^:]+): ]]; then
+                local current_device="${BASH_REMATCH[1]}"
+                # Check if this device has the matching path
+                if echo "$devices_yaml" | awk "/^${current_device}:/,/^[^ ]/" | grep -q "path: ${mount_id}$"; then
+                    device_name="$current_device"
+                    break
+                fi
+            fi
+        done <<< "$devices_yaml"
+    else
+        # Try as device name directly
+        device_name="$mount_id"
+    fi
+
+    if [ -z "$device_name" ]; then
+        echo -e "${RED}Error: Mount '$mount_id' not found on container '$container'${RESET}"
+        echo "Use 'cdev mounts $container' to see existing mounts"
+        exit 1
+    fi
+
+    # Verify device exists
+    if ! lxc config device show "$container" 2>/dev/null | grep -q "^${device_name}:"; then
+        echo -e "${RED}Error: Mount device '$device_name' not found${RESET}"
+        echo "Use 'cdev mounts $container' to see existing mounts"
+        exit 1
+    fi
+
+    # Get the container path for the success message
+    local container_path=$(lxc config device get "$container" "$device_name" path 2>/dev/null)
+
+    # Remove the device
+    if lxc config device remove "$container" "$device_name" 2>/dev/null; then
+        echo -e "${GREEN}Unmounted${RESET} ${container_path} ${GREEN}from${RESET} ${container}"
+    else
+        echo -e "${RED}Error: Failed to remove mount${RESET}"
+        exit 1
+    fi
+}
+
+cmd_mounts() {
+    local container=""
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_mounts_help; exit 0 ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${RESET}"
+                show_mounts_help
+                exit 1
+                ;;
+            *)
+                container="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Validate required argument
+    if [ -z "$container" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev mounts <container>"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    echo -e "${BOLD}Bind mounts on $container:${RESET}"
+    echo
+
+    # Get all devices and filter for disk type mounts
+    local devices_yaml=$(lxc config device show "$container" 2>/dev/null)
+    local found=false
+
+    # Parse devices starting with cdev-mount-
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^(cdev-mount-[^:]+): ]]; then
+            local device_name="${BASH_REMATCH[1]}"
+
+            # Extract device properties
+            local host_path=$(lxc config device get "$container" "$device_name" source 2>/dev/null)
+            local container_path=$(lxc config device get "$container" "$device_name" path 2>/dev/null)
+            local readonly=$(lxc config device get "$container" "$device_name" readonly 2>/dev/null)
+
+            local mode="rw"
+            if [ "$readonly" = "true" ]; then
+                mode="ro"
+            fi
+
+            # Display formatted row
+            if [ "$found" = false ]; then
+                printf "  %-30s %-35s %-25s %s\n" "Device Name" "Host Path" "Container Path" "Mode"
+                printf "  %-30s %-35s %-25s %s\n" "-----------" "---------" "--------------" "----"
+                found=true
+            fi
+
+            printf "  %-30s %-35s %-25s %s\n" "$device_name" "$host_path" "$container_path" "$mode"
+        fi
+    done <<< "$devices_yaml"
+
+    if [ "$found" = false ]; then
+        echo "  No bind mounts on $container"
+        echo
+        echo "  Add a mount with: cdev mount $container <host-path> <container-path>"
+    fi
+    echo
+}
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================
