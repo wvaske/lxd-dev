@@ -39,7 +39,7 @@ _cdev_completions() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="setup build create worktree enter list images status snapshot vscode port refresh destroy exec help"
+    local commands="setup build create worktree enter list images status snapshot vscode port mount unmount mounts resources refresh destroy exec help"
     local global_opts="-h --help -v --version"
 
     # Get the command (first non-option argument after 'cdev')
@@ -255,6 +255,76 @@ _cdev_completions() {
                 COMPREPLY=($(compgen -W "$(_cdev_get_containers)" -- "$cur"))
             elif [[ $pos -eq 1 ]]; then
                 COMPREPLY=($(compgen -W "add list remove" -- "$cur"))
+            fi
+            ;;
+
+        mount)
+            # Get position in command
+            local pos=0
+            for ((i=cmd_index+1; i < cword; i++)); do
+                if [[ "${words[i]}" != -* ]]; then
+                    ((pos++))
+                fi
+            done
+
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--readonly -h --help" -- "$cur"))
+            elif [[ $pos -eq 0 ]]; then
+                # Container name
+                COMPREPLY=($(compgen -W "$(_cdev_get_running_containers)" -- "$cur"))
+            elif [[ $pos -eq 1 ]]; then
+                # Host path
+                _filedir -d
+            elif [[ $pos -eq 2 ]]; then
+                # Container path - no completion, user types absolute path
+                :
+            fi
+            ;;
+
+        unmount)
+            # Get position in command
+            local pos=0
+            for ((i=cmd_index+1; i < cword; i++)); do
+                if [[ "${words[i]}" != -* ]]; then
+                    ((pos++))
+                fi
+            done
+
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+            elif [[ $pos -eq 0 ]]; then
+                # Container name
+                COMPREPLY=($(compgen -W "$(_cdev_get_containers)" -- "$cur"))
+            fi
+            # Position 1 would be mount name/path - no good completion available
+            ;;
+
+        mounts)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -W "$(_cdev_get_containers)" -- "$cur"))
+            fi
+            ;;
+
+        resources)
+            # Get position in command
+            local pos=0
+            for ((i=cmd_index+1; i < cword; i++)); do
+                if [[ "${words[i]}" != -* ]]; then
+                    ((pos++))
+                fi
+            done
+
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=($(compgen -W "--cpu --memory -h --help" -- "$cur"))
+            elif [[ "$prev" == "--cpu" ]]; then
+                COMPREPLY=($(compgen -W "1 2 4 8 16" -- "$cur"))
+            elif [[ "$prev" == "--memory" ]]; then
+                COMPREPLY=($(compgen -W "2GB 4GB 8GB 16GB 32GB 64GB" -- "$cur"))
+            elif [[ $pos -eq 0 ]]; then
+                # Container name
+                COMPREPLY=($(compgen -W "$(_cdev_get_containers)" -- "$cur"))
             fi
             ;;
 
