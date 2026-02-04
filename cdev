@@ -1877,9 +1877,10 @@ cmd_resources() {
     fi
 
     if [ -n "$new_memory" ]; then
-        # Validate memory format (number followed by optional unit)
-        if ! [[ "$new_memory" =~ ^[0-9]+[GMK]?[Bb]?$ ]]; then
+        # Validate memory format (number followed by required unit)
+        if ! [[ "$new_memory" =~ ^[0-9]+[GMKgmk][Bb]?$ ]]; then
             echo -e "${RED}Error: Invalid memory format. Use formats like: 4GB, 8GB, 16GB, 1024MB${RESET}"
+            echo "Note: Unit is required (e.g., '64GB' not '64')"
             exit 1
         fi
         lxc config set "$container" limits.memory "$new_memory"
