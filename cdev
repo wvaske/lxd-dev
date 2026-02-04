@@ -49,6 +49,7 @@ ${BOLD}COMMANDS${RESET}
     ${GREEN}mount${RESET}       Mount host directory into running container
     ${GREEN}unmount${RESET}     Remove bind mount from container
     ${GREEN}mounts${RESET}      List all active bind mounts on container
+    ${GREEN}resources${RESET}   View or modify container CPU and memory limits
     ${GREEN}refresh${RESET}     Push latest shell config to existing containers
     ${GREEN}destroy${RESET}     Remove a container (and optionally its worktree)
     ${GREEN}exec${RESET}        Run a command in a container
@@ -669,6 +670,42 @@ ${BOLD}DESCRIPTION${RESET}
 
 ${BOLD}EXAMPLES${RESET}
     cdev mounts my-project
+EOF
+}
+
+show_resources_help() {
+    cat << EOF
+${BOLD}cdev resources${RESET} - View or modify container CPU and memory limits
+
+${BOLD}USAGE${RESET}
+    cdev resources <container>
+    cdev resources <container> --cpu <cores> --memory <size>
+
+${BOLD}ARGUMENTS${RESET}
+    container     Container name
+
+${BOLD}OPTIONS${RESET}
+    --cpu N       Set CPU core limit (e.g., 2, 4, 8)
+    --memory SZ   Set memory limit (e.g., 4GB, 8GB, 16GB)
+    -h, --help    Show this help message
+
+${BOLD}DESCRIPTION${RESET}
+    Without options, displays current CPU and memory limits for the container.
+    With --cpu and/or --memory, updates the limits. Changes apply immediately
+    to running containers.
+
+${BOLD}EXAMPLES${RESET}
+    ${DIM}# View current resource limits${RESET}
+    cdev resources my-project
+
+    ${DIM}# Increase memory to 16GB${RESET}
+    cdev resources my-project --memory 16GB
+
+    ${DIM}# Set both CPU and memory${RESET}
+    cdev resources my-project --cpu 8 --memory 32GB
+
+    ${DIM}# Reduce resources for idle container${RESET}
+    cdev resources my-project --cpu 2 --memory 4GB
 EOF
 }
 
@@ -1771,6 +1808,97 @@ cmd_mounts() {
     echo
 }
 
+cmd_resources() {
+    local container=""
+    local new_cpu=""
+    local new_memory=""
+
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help) show_resources_help; exit 0 ;;
+            --cpu) new_cpu="$2"; shift 2 ;;
+            --memory) new_memory="$2"; shift 2 ;;
+            -*)
+                echo -e "${RED}Unknown option: $1${RESET}"
+                show_resources_help
+                exit 1
+                ;;
+            *)
+                container="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # Validate required argument
+    if [ -z "$container" ]; then
+        echo -e "${RED}Error: Container name is required${RESET}"
+        echo "Usage: cdev resources <container> [--cpu N] [--memory SIZE]"
+        exit 1
+    fi
+
+    # Check container exists
+    if ! lxc info "$container" &> /dev/null; then
+        echo -e "${RED}Error: Container '$container' not found${RESET}"
+        exit 1
+    fi
+
+    # If no options provided, show current resources
+    if [ -z "$new_cpu" ] && [ -z "$new_memory" ]; then
+        local current_cpu=$(lxc config get "$container" limits.cpu 2>/dev/null)
+        local current_memory=$(lxc config get "$container" limits.memory 2>/dev/null)
+        local state=$(lxc list "$container" --format csv -c s)
+
+        # Default to "unlimited" if not set
+        [ -z "$current_cpu" ] && current_cpu="unlimited"
+        [ -z "$current_memory" ] && current_memory="unlimited"
+
+        echo -e "${BOLD}Resources for $container:${RESET}"
+        echo
+        echo "  CPU:    $current_cpu cores"
+        echo "  Memory: $current_memory"
+        echo "  Status: $state"
+        echo
+        echo "Change with: cdev resources $container --cpu <N> --memory <SIZE>"
+        return 0
+    fi
+
+    # Apply new limits
+    local changes=()
+
+    if [ -n "$new_cpu" ]; then
+        # Validate CPU is a positive integer
+        if ! [[ "$new_cpu" =~ ^[0-9]+$ ]] || [ "$new_cpu" -lt 1 ]; then
+            echo -e "${RED}Error: CPU must be a positive integer (e.g., 2, 4, 8)${RESET}"
+            exit 1
+        fi
+        lxc config set "$container" limits.cpu "$new_cpu"
+        changes+=("CPU: $new_cpu cores")
+    fi
+
+    if [ -n "$new_memory" ]; then
+        # Validate memory format (number followed by optional unit)
+        if ! [[ "$new_memory" =~ ^[0-9]+[GMK]?[Bb]?$ ]]; then
+            echo -e "${RED}Error: Invalid memory format. Use formats like: 4GB, 8GB, 16GB, 1024MB${RESET}"
+            exit 1
+        fi
+        lxc config set "$container" limits.memory "$new_memory"
+        changes+=("Memory: $new_memory")
+    fi
+
+    echo -e "${GREEN}Updated resources for $container:${RESET}"
+    for change in "${changes[@]}"; do
+        echo "  $change"
+    done
+
+    # Note about running containers
+    local state=$(lxc list "$container" --format csv -c s)
+    if [ "$state" = "RUNNING" ]; then
+        echo
+        echo -e "${DIM}Changes applied immediately to running container.${RESET}"
+    fi
+}
+
 # =============================================================================
 # Main Entry Point
 # =============================================================================
@@ -1806,6 +1934,7 @@ main() {
         mount)    cmd_mount "$@" ;;
         unmount)  cmd_unmount "$@" ;;
         mounts)   cmd_mounts "$@" ;;
+        resources) cmd_resources "$@" ;;
         refresh)  cmd_refresh "$@" ;;
         destroy|rm) cmd_destroy "$@" ;;
         exec)     cmd_exec "$@" ;;
