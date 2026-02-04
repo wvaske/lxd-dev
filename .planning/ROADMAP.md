@@ -32,7 +32,7 @@ Adding bind mount management to cdev through three new commands (mount, unmount,
 **Plans:** 1 plan
 
 Plans:
-- [ ] 01-01-PLAN.md — Implement mount/unmount/mounts commands with LXD device operations
+- [x] 01-01-PLAN.md — Implement mount/unmount/mounts commands with LXD device operations
 
 ---
 
@@ -63,11 +63,11 @@ Plans:
 
 | Phase | Goal | Requirements | Status | Progress |
 |-------|------|--------------|--------|----------|
-| 1 - Core Mount Operations | Mount management commands with persistence | 5 | Pending | 0% |
+| 1 - Core Mount Operations | Mount management commands with persistence | 5 | Complete | 100% |
 | 2 - CLI Integration | Help and completion | 2 | Pending | 0% |
 
-**Overall Progress:** 0/7 requirements complete (0%)
+**Overall Progress:** 5/7 requirements complete (71%)
 
 ---
 
-*Last updated: 2026-02-02*
+*Last updated: 2026-02-04*

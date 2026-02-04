@@ -10,10 +10,10 @@
 
 ## Current Position
 
-**Phase:** 1 of 2
-**Plan:** Not started
-**Status:** Pending
-**Progress:** [░░░░░░░░░░] 0/7 requirements (0%)
+**Phase:** 1 of 2 (Core Mount Operations)
+**Plan:** 01-01 complete (1 of 1 in phase)
+**Status:** Phase 1 complete
+**Progress:** [█████░░░░░] 5/7 requirements (71%)
 
 ### Active Phase Details
 
@@ -21,7 +21,7 @@
 - Goal: Users can mount, unmount, and list bind mounts on running containers with persistence
 - Requirements: MOUNT-01, MOUNT-02, MOUNT-03, MOUNT-04, MOUNT-05 (5 total)
 - Success Criteria: 5 observable behaviors
-- Status: Not started
+- Status: ✓ Complete (2026-02-03)
 
 ---
 
@@ -30,11 +30,11 @@
 | Metric | Value | Notes |
 |--------|-------|-------|
 | Total Phases | 2 | Quick depth (small feature) |
-| Completed Phases | 0 | — |
+| Completed Phases | 1 | Phase 1 complete |
 | Total Requirements | 7 | All v1 scope |
-| Completed Requirements | 0 | — |
+| Completed Requirements | 5 | MOUNT-01 through MOUNT-05 |
 | Blocked Items | 0 | — |
-| Active Plans | 0 | Not started |
+| Active Plans | 0 | Phase 1 complete, Phase 2 pending |
 
 ---
 
@@ -47,6 +47,8 @@
 | Two phases only | Small feature with natural split: core ops vs CLI polish | Minimal overhead for quick delivery |
 | Phase 1 includes all 5 mount reqs | Mount/unmount/list are tightly coupled, should deliver together | Complete mount workflow in one phase |
 | Phase 2 for help/completion | Can't document commands before they exist | Natural dependency |
+| Device naming: cdev-mount-{path} | Ensures uniqueness and recognizability of mount devices | 01-01 - Easy identification and management of mounts |
+| Unmount by path or device name | Improves user experience - no need to remember device names | 01-01 - Users can unmount by the path they mounted |
 
 ### Active TODOs
 

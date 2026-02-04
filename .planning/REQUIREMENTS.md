@@ -4,11 +4,11 @@
 
 ### Mount Management
 
-- [ ] **MOUNT-01**: User can mount a host directory into a running container with `cdev mount <container> <host-path> <container-path>`
-- [ ] **MOUNT-02**: User can specify `--readonly` flag to mount read-only
-- [ ] **MOUNT-03**: Mounts persist across container restarts (stored as LXD disk devices)
-- [ ] **MOUNT-04**: User can remove a bind mount with `cdev unmount <container> <mount-name-or-path>`
-- [ ] **MOUNT-05**: User can list active bind mounts on a container with `cdev mounts <container>`
+- [x] **MOUNT-01**: User can mount a host directory into a running container with `cdev mount <container> <host-path> <container-path>`
+- [x] **MOUNT-02**: User can specify `--readonly` flag to mount read-only
+- [x] **MOUNT-03**: Mounts persist across container restarts (stored as LXD disk devices)
+- [x] **MOUNT-04**: User can remove a bind mount with `cdev unmount <container> <mount-name-or-path>`
+- [x] **MOUNT-05**: User can list active bind mounts on a container with `cdev mounts <container>`
 
 ### CLI Integration
 
@@ -30,10 +30,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MOUNT-01 | Phase 1 | Pending |
-| MOUNT-02 | Phase 1 | Pending |
-| MOUNT-03 | Phase 1 | Pending |
-| MOUNT-04 | Phase 1 | Pending |
-| MOUNT-05 | Phase 1 | Pending |
+| MOUNT-01 | Phase 1 | Complete |
+| MOUNT-02 | Phase 1 | Complete |
+| MOUNT-03 | Phase 1 | Complete |
+| MOUNT-04 | Phase 1 | Complete |
+| MOUNT-05 | Phase 1 | Complete |
 | CLI-01 | Phase 2 | Pending |
 | CLI-02 | Phase 2 | Pending |
